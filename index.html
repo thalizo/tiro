@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sobrevivência — Top-Down Shooter</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #10151b;
+      color: #eef4f7;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-width: 320px;
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background:
+        radial-gradient(ellipse at 50% 40%, rgba(25, 45, 54, .7), transparent 70%),
+        #10151b;
+    }
+
+    .game-shell {
+      position: relative;
+      width: min(100vw, 1100px);
+      height: min(100vh, 760px);
+      min-height: 420px;
+      overflow: hidden;
+      border: 1px solid #34434c;
+      border-radius: 12px;
+      background: #172127;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, .45);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: crosshair;
+    }
+
+    .hud {
+      position: absolute;
+      inset: 18px 20px auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      pointer-events: none;
+      text-shadow: 0 2px 8px #000;
+    }
+
+    .score-label {
+      color: #a9bac1;
+      font-size: .75rem;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    #score {
+      display: block;
+      margin-top: 2px;
+      font-size: 2rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .progression {
+      display: flex;
+      gap: 18px;
+      margin-top: 8px;
+      color: #bdcbd0;
+      font-size: .82rem;
+    }
+
+    .progression strong {
+      color: #eef4f7;
+    }
+
+    .weapon-name {
+      display: block;
+      color: #69d6a5;
+      font-size: 1rem;
+      font-weight: 800;
+    }
+
+    .bot-status {
+      display: block;
+      margin-top: 3px;
+      color: #8be8bd;
+      font-size: .78rem;
+      font-weight: 700;
+    }
+
+    .player-health {
+      display: block;
+      margin-top: 3px;
+      color: #ff9f9f;
+      font-size: .82rem;
+      font-weight: 800;
+    }
+
+    .credit {
+      position: absolute;
+      right: 14px;
+      bottom: 10px;
+      color: rgba(215, 229, 232, .55);
+      font-size: .72rem;
+      letter-spacing: .04em;
+      pointer-events: none;
+      text-shadow: 0 1px 5px #000;
+    }
+
+    .controls {
+      max-width: 270px;
+      color: #bdcbd0;
+      font-size: .82rem;
+      text-align: right;
+      line-height: 1.6;
+    }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: rgba(8, 13, 17, .72);
+      text-align: center;
+    }
+
+    .overlay[hidden] { display: none; }
+
+    .dialog {
+      max-width: 420px;
+      padding: 30px;
+      border: 1px solid #3c515a;
+      border-radius: 14px;
+      background: rgba(20, 31, 37, .96);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, .4);
+    }
+
+    .dialog h1 {
+      margin: 0 0 10px;
+      font-size: clamp(1.7rem, 5vw, 2.5rem);
+    }
+
+    .dialog p {
+      margin: 0 0 22px;
+      color: #bdcbd0;
+      line-height: 1.6;
+    }
+
+    button {
+      padding: 11px 20px;
+      border: 0;
+      border-radius: 8px;
+      background: #69d6a5;
+      color: #10251c;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    button:hover { background: #8be8bd; }
+    button:focus-visible { outline: 3px solid white; outline-offset: 3px; }
+
+    @media (max-width: 560px) {
+      .game-shell { width: 100vw; height: 100vh; min-height: 0; border: 0; border-radius: 0; }
+      .hud { inset: 14px; }
+      .controls { max-width: 190px; font-size: .72rem; }
+    }
+  </style>
+</head>
+<body>
+  <main class="game-shell" aria-label="Jogo de tiro top-down">
+    <canvas id="game" aria-label="Área de jogo"></canvas>
+    <div class="hud" aria-live="polite">
+      <div>
+        <span class="score-label">Pontuação</span>
+        <span id="score">0</span>
+        <div class="progression">
+          <span>Onda <strong id="level">1</strong></span>
+          <span>Arma: <strong id="weapon" class="weapon-name">Pistola</strong></span>
+        </div>
+        <span id="player-health" class="player-health">Vida: 3 / 3</span>
+        <span id="bot-status" class="bot-status">Bot: aguardando início</span>
+      </div>
+      <div class="controls">Mover: WASD ou setas<br>Mirar: mouse · Atirar: clique esquerdo</div>
+    </div>
+    <section id="overlay" class="overlay">
+      <div class="dialog">
+        <h1 id="overlay-title">Sobreviva!</h1>
+        <p id="overlay-message">Elimine os inimigos antes que eles alcancem você.</p>
+        <button id="start-button" type="button">Começar jogo</button>
+      </div>
+    </section>
+    <span class="credit">feito por thales</span>
+  </main>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const canvas = document.getElementById("game");
+      const context = canvas.getContext("2d");
+      const scoreElement = document.getElementById("score");
+      const levelElement = document.getElementById("level");
+      const weaponElement = document.getElementById("weapon");
+      const playerHealthElement = document.getElementById("player-health");
+      const botStatusElement = document.getElementById("bot-status");
+      const overlay = document.getElementById("overlay");
+      const overlayTitle = document.getElementById("overlay-title");
+      const overlayMessage = document.getElementById("overlay-message");
+      const startButton = document.getElementById("start-button");
+
+      const keys = new Set();
+      const bullets = [];
+      const enemyBullets = [];
+      const enemies = [];
+      const player = {
+        x: 0,
+        y: 0,
+        radius: 16,
+        speed: 250,
+        angle: 0,
+        health: 3,
+        maxHealth: 3,
+        invulnerability: 0
+      };
+      const enemyShapes = ["circle", "triangle", "square", "pentagon", "hexagon"];
+      const killsPerLevel = 5;
+      const baseWeapons = [
+        { name: "Pistola", interval: 0.2, pellets: 1, spread: 0, speed: 570, radius: 4, damage: 2, color: "#ffd166" },
+        { name: "Submetralhadora", interval: 0.09, pellets: 1, spread: 0, speed: 610, radius: 3, damage: 3, color: "#8be9fd" },
+        { name: "Escopeta", interval: 0.52, pellets: 5, spread: 0.38, speed: 470, radius: 4, damage: 2, color: "#ff9f68" },
+        { name: "Rifle", interval: 0.32, pellets: 1, spread: 0, speed: 900, radius: 5, damage: 4, color: "#f6f7a8" },
+        { name: "Canhão de plasma", interval: 0.42, pellets: 1, spread: 0, speed: 520, radius: 8, damage: 6, color: "#c792ea" },
+        { name: "Minigun", interval: 0.065, pellets: 1, spread: 0.08, speed: 680, radius: 3, damage: 2, color: "#ff6b6b" },
+        { name: "Lança-chamas", interval: 0.12, pellets: 3, spread: 0.3, speed: 390, radius: 6, damage: 2, color: "#ffcf70" }
+      ];
+      const weapons = [...baseWeapons];
+
+      let width = 0;
+      let height = 0;
+      let score = 0;
+      let level = 1;
+      let weaponIndex = 0;
+      let unlockNotice = "";
+      let unlockNoticeTime = 0;
+      let running = false;
+      let firing = false;
+      let fireCooldown = 0;
+      let spawnCooldown = 0;
+      let boss = null;
+      let bot = null;
+      let previousTime = 0;
+      let animationFrame = 0;
+      let pointer = { x: 0, y: 0 };
+
+      // Ajusta a resolução interna para a densidade da tela sem alterar o tamanho visual.
+      function resizeCanvas() {
+        const bounds = canvas.getBoundingClientRect();
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+        width = bounds.width;
+        height = bounds.height;
+        canvas.width = Math.round(width * pixelRatio);
+        canvas.height = Math.round(height * pixelRatio);
+        context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+
+        if (!running && player.x === 0 && player.y === 0) {
+          player.x = width / 2;
+          player.y = height / 2;
+        } else {
+          player.x = Math.max(player.radius, Math.min(width - player.radius, player.x));
+          player.y = Math.max(player.radius, Math.min(height - player.radius, player.y));
+        }
+        draw();
+      }
+
+      function updatePointer(event) {
+        const bounds = canvas.getBoundingClientRect();
+        pointer = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+      }
+
+      function startGame() {
+        cancelAnimationFrame(animationFrame);
+        score = 0;
+        bullets.length = 0;
+        enemyBullets.length = 0;
+        enemies.length = 0;
+        boss = null;
+        keys.clear();
+        scoreElement.textContent = "0";
+        level = 1;
+        weaponIndex = 0;
+        levelElement.textContent = "1";
+        weaponElement.textContent = weapons[0].name;
+        unlockNotice = "";
+        unlockNoticeTime = 0;
+        player.x = width / 2;
+        player.y = height / 2;
+        player.angle = 0;
+        player.health = player.maxHealth;
+        player.invulnerability = 0;
+        playerHealthElement.textContent = `Vida: ${player.health} / ${player.maxHealth}`;
+        bot = {
+          x: player.x - 42,
+          y: player.y,
+          radius: 13,
+          health: 100,
+          maxHealth: 100,
+          fireCooldown: 0.25,
+          damageCooldown: 0
+        };
+        botStatusElement.textContent = `Bot: ${bot.health} HP`;
+        spawnCooldown = 0.6;
+        fireCooldown = 0;
+        running = true;
+        overlay.hidden = true;
+        previousTime = performance.now();
+        animationFrame = requestAnimationFrame(gameLoop);
+      }
+
+      function endGame() {
+        running = false;
+        firing = false;
+        overlayTitle.textContent = "Fim de jogo";
+        overlayMessage.textContent = `Sua pontuação: ${score}. Tente novamente e sobreviva por mais tempo!`;
+        startButton.textContent = "Jogar novamente";
+        overlay.hidden = false;
+      }
+
+      function damagePlayer(amount) {
+        if (!running || player.invulnerability > 0) return false;
+        player.health = Math.max(0, player.health - amount);
+        player.invulnerability = 0.9;
+        playerHealthElement.textContent = `Vida: ${player.health} / ${player.maxHealth}`;
+        if (player.health === 0) {
+          endGame();
+          return true;
+        }
+        return false;
+      }
+
+      function spawnEnemy() {
+        // Escolhe uma das quatro bordas e posiciona o inimigo fora dela.
+        const side = Math.floor(Math.random() * 4);
+        const difficulty = level - 1;
+        const radius = 13 + Math.random() * 7 + Math.min(difficulty, 15) * 1.1;
+        let x;
+        let y;
+
+        if (side === 0) { x = Math.random() * width; y = -radius; }
+        else if (side === 1) { x = width + radius; y = Math.random() * height; }
+        else if (side === 2) { x = Math.random() * width; y = height + radius; }
+        else { x = -radius; y = Math.random() * height; }
+
+        const maxHealth = 1 + Math.floor(difficulty / 2);
+        const baseSpeed = 55 + Math.random() * 35;
+        enemies.push({
+          x,
+          y,
+          radius,
+          shape: enemyShapes[Math.floor(Math.random() * enemyShapes.length)],
+          rotation: Math.random() * Math.PI * 2,
+          speed: Math.min(210, baseSpeed * (1 + Math.min(difficulty, 20) * 0.035) + Math.min(score, 30)),
+          health: maxHealth,
+          maxHealth
+        });
+      }
+
+      function spawnBoss() {
+        const side = Math.floor(Math.random() * 4);
+        const isFinalBoss = level === 500;
+        const bossTier = Math.floor(level / 10) - 1;
+        const radius = isFinalBoss ? 84 : 44 + Math.min(Math.floor(bossTier / 5) * 2, 18);
+        let x;
+        let y;
+
+        if (side === 0) { x = Math.random() * width; y = -radius; }
+        else if (side === 1) { x = width + radius; y = Math.random() * height; }
+        else if (side === 2) { x = Math.random() * width; y = height + radius; }
+        else { x = -radius; y = Math.random() * height; }
+
+        const maxHealth = isFinalBoss ? 15000 : 90 + (level - 10) * 12;
+        boss = {
+          x,
+          y,
+          radius,
+          speed: isFinalBoss ? 72 : Math.min(68, 38 + bossTier * 0.7),
+          health: maxHealth,
+          maxHealth,
+          wave: level,
+          isFinalBoss,
+          bulletCount: isFinalBoss ? 20 : Math.min(3 + bossTier, 12),
+          bulletSpeed: isFinalBoss ? 340 : Math.min(380, 230 + bossTier * 8),
+          fireCooldown: isFinalBoss ? 0.8 : Math.max(0.5, 1.35 - bossTier * 0.07),
+          volleyAngle: 0
+        };
+        enemyBullets.length = 0;
+        unlockNotice = isFinalBoss ? "BOSS FINAL — ONDA 500!" : `Chefe da onda ${level}!`;
+        unlockNoticeTime = 3;
+      }
+
+      function fireBossBullet(angle, speed, radius) {
+        enemyBullets.push({
+          x: boss.x + Math.cos(angle) * (boss.radius - 6),
+          y: boss.y + Math.sin(angle) * (boss.radius - 6),
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          radius,
+          life: 4
+        });
+      }
+
+      function shootBoss() {
+        const targetAngle = Math.atan2(player.y - boss.y, player.x - boss.x);
+        const bulletRadius = boss.isFinalBoss ? 9 : Math.min(9, 6 + Math.floor(boss.wave / 100));
+
+        if (boss.isFinalBoss) {
+          // O chefe final combina uma salva circular com uma rajada direcionada.
+          for (let index = 0; index < boss.bulletCount; index++) {
+            const angle = boss.volleyAngle + (index / boss.bulletCount) * Math.PI * 2;
+            fireBossBullet(angle, boss.bulletSpeed, bulletRadius);
+          }
+          const aimedShots = 7;
+          for (let index = 0; index < aimedShots; index++) {
+            const spread = (index / (aimedShots - 1) - 0.5) * 0.8;
+            fireBossBullet(targetAngle + spread, boss.bulletSpeed * 1.12, bulletRadius);
+          }
+          boss.volleyAngle += 0.18;
+        } else {
+          const spread = Math.min(0.8, (boss.bulletCount - 1) * 0.09);
+          for (let index = 0; index < boss.bulletCount; index++) {
+            const offset = boss.bulletCount === 1
+              ? 0
+              : (index / (boss.bulletCount - 1) - 0.5) * spread;
+            fireBossBullet(targetAngle + offset, boss.bulletSpeed, bulletRadius);
+          }
+        }
+
+        boss.fireCooldown = boss.isFinalBoss
+          ? 0.8
+          : Math.max(0.5, 1.35 - (Math.floor(boss.wave / 10) - 1) * 0.07);
+      }
+
+      function shoot() {
+        const weapon = weapons[weaponIndex];
+        const muzzleDistance = player.radius + 9;
+
+        for (let pellet = 0; pellet < weapon.pellets; pellet++) {
+          const spreadOffset = weapon.pellets === 1
+            ? (Math.random() - 0.5) * weapon.spread
+            : (pellet / (weapon.pellets - 1) - 0.5) * weapon.spread;
+          const angle = player.angle + spreadOffset;
+          bullets.push({
+            x: player.x + Math.cos(angle) * muzzleDistance,
+            y: player.y + Math.sin(angle) * muzzleDistance,
+            vx: Math.cos(angle) * weapon.speed,
+            vy: Math.sin(angle) * weapon.speed,
+            radius: weapon.radius,
+            damage: weapon.damage,
+            color: weapon.color,
+            life: 1.15
+          });
+        }
+
+        fireCooldown = weapon.interval;
+      }
+
+      function turnBotIntoEnemy() {
+        if (!bot) return;
+        const radius = bot.radius + 3;
+        const maxHealth = Math.max(4, Math.ceil(level / 2));
+        enemies.push({
+          x: bot.x,
+          y: bot.y,
+          radius,
+          shape: enemyShapes[Math.floor(Math.random() * enemyShapes.length)],
+          rotation: Math.random() * Math.PI * 2,
+          speed: Math.min(190, 90 + level * 2),
+          health: maxHealth,
+          maxHealth
+        });
+        bot = null;
+        botStatusElement.textContent = "Bot: virou inimigo!";
+        unlockNotice = "O bot foi corrompido!";
+        unlockNoticeTime = 2.4;
+      }
+
+      function damageBot(damage) {
+        if (!bot) return;
+        bot.health = Math.max(0, bot.health - damage);
+        botStatusElement.textContent = `Bot: ${bot.health} HP`;
+        if (bot.health === 0) turnBotIntoEnemy();
+      }
+
+      function updateBot(deltaTime) {
+        if (!bot) return;
+
+        // O bot acompanha o jogador e dispara automaticamente no alvo mais próximo.
+        const followX = player.x - Math.cos(player.angle) * 44;
+        const followY = player.y - Math.sin(player.angle) * 44;
+        const followAmount = Math.min(1, deltaTime * 4);
+        bot.x += (followX - bot.x) * followAmount;
+        bot.y += (followY - bot.y) * followAmount;
+        bot.damageCooldown = Math.max(0, bot.damageCooldown - deltaTime);
+        bot.fireCooldown -= deltaTime;
+
+        let target = boss;
+        let targetDistance = boss ? Math.hypot(boss.x - bot.x, boss.y - bot.y) : Infinity;
+        for (const enemy of enemies) {
+          const distance = Math.hypot(enemy.x - bot.x, enemy.y - bot.y);
+          if (distance < targetDistance) {
+            target = enemy;
+            targetDistance = distance;
+          }
+        }
+
+        if (target && targetDistance < 520 && bot.fireCooldown <= 0) {
+          const angle = Math.atan2(target.y - bot.y, target.x - bot.x);
+          bullets.push({
+            x: bot.x + Math.cos(angle) * (bot.radius + 5),
+            y: bot.y + Math.sin(angle) * (bot.radius + 5),
+            vx: Math.cos(angle) * 650,
+            vy: Math.sin(angle) * 650,
+            radius: 4,
+            damage: Math.max(3, Math.ceil(level / 2)),
+            color: "#75f0d0",
+            life: 1.2
+          });
+          bot.fireCooldown = 0.38;
+        }
+      }
+
+      function updateLevel() {
+        const newLevel = Math.floor(score / killsPerLevel) + 1;
+        if (newLevel === level) return;
+
+        level = newLevel;
+        levelElement.textContent = String(level);
+        const unlockedWeaponIndex = level - 1;
+        if (unlockedWeaponIndex >= weapons.length) {
+          const baseIndex = unlockedWeaponIndex % baseWeapons.length;
+          const tier = Math.floor(unlockedWeaponIndex / baseWeapons.length) + 1;
+          const baseWeapon = baseWeapons[baseIndex];
+          weapons.push({
+            ...baseWeapon,
+            name: `${baseWeapon.name} Mk ${tier + 1}`,
+            interval: Math.max(0.055, baseWeapon.interval * Math.pow(0.92, tier)),
+            speed: baseWeapon.speed * (1 + tier * 0.05),
+            damage: Math.ceil(baseWeapon.damage * (1 + tier * 0.5))
+          });
+        }
+        weaponIndex = unlockedWeaponIndex;
+        unlockNotice = `Onda ${level}: ${weapons[weaponIndex].name} desbloqueada!`;
+        weaponElement.textContent = weapons[weaponIndex].name;
+        unlockNoticeTime = 2.4;
+        if (level % 10 === 0) spawnBoss();
+      }
+
+      function update(deltaTime) {
+        unlockNoticeTime = Math.max(0, unlockNoticeTime - deltaTime);
+        player.invulnerability = Math.max(0, player.invulnerability - deltaTime);
+        player.angle = Math.atan2(pointer.y - player.y, pointer.x - player.x);
+
+        let moveX = 0;
+        let moveY = 0;
+        if (keys.has("w") || keys.has("arrowup")) moveY -= 1;
+        if (keys.has("s") || keys.has("arrowdown")) moveY += 1;
+        if (keys.has("a") || keys.has("arrowleft")) moveX -= 1;
+        if (keys.has("d") || keys.has("arrowright")) moveX += 1;
+
+        // Normalizar evita que o movimento diagonal seja mais rápido.
+        const magnitude = Math.hypot(moveX, moveY) || 1;
+        player.x += (moveX / magnitude) * player.speed * deltaTime;
+        player.y += (moveY / magnitude) * player.speed * deltaTime;
+        player.x = Math.max(player.radius, Math.min(width - player.radius, player.x));
+        player.y = Math.max(player.radius, Math.min(height - player.radius, player.y));
+        updateBot(deltaTime);
+
+        fireCooldown -= deltaTime;
+        if (firing && fireCooldown <= 0) shoot();
+
+        spawnCooldown -= deltaTime;
+        if (spawnCooldown <= 0) {
+          spawnEnemy();
+          spawnCooldown = Math.max(0.38, 1.15 - score * 0.012);
+        }
+
+        for (let index = bullets.length - 1; index >= 0; index--) {
+          const bullet = bullets[index];
+          bullet.x += bullet.vx * deltaTime;
+          bullet.y += bullet.vy * deltaTime;
+          bullet.life -= deltaTime;
+          if (bullet.life <= 0 || bullet.x < -10 || bullet.x > width + 10 ||
+              bullet.y < -10 || bullet.y > height + 10) {
+            bullets.splice(index, 1);
+          }
+        }
+
+        for (let index = enemyBullets.length - 1; index >= 0; index--) {
+          const bullet = enemyBullets[index];
+          bullet.x += bullet.vx * deltaTime;
+          bullet.y += bullet.vy * deltaTime;
+          bullet.life -= deltaTime;
+          if (bullet.life <= 0 || bullet.x < -10 || bullet.x > width + 10 ||
+              bullet.y < -10 || bullet.y > height + 10) {
+            enemyBullets.splice(index, 1);
+            continue;
+          }
+          if (bot && Math.hypot(bullet.x - bot.x, bullet.y - bot.y) < bullet.radius + bot.radius) {
+            enemyBullets.splice(index, 1);
+            damageBot(20);
+            continue;
+          }
+          if (Math.hypot(bullet.x - player.x, bullet.y - player.y) < bullet.radius + player.radius) {
+            enemyBullets.splice(index, 1);
+            if (damagePlayer(1)) return;
+          }
+        }
+
+        for (let enemyIndex = enemies.length - 1; enemyIndex >= 0; enemyIndex--) {
+          const enemy = enemies[enemyIndex];
+          const dx = player.x - enemy.x;
+          const dy = player.y - enemy.y;
+          const distance = Math.hypot(dx, dy) || 1;
+          enemy.x += (dx / distance) * enemy.speed * deltaTime;
+          enemy.y += (dy / distance) * enemy.speed * deltaTime;
+
+          if (bot && bot.damageCooldown <= 0 &&
+              Math.hypot(enemy.x - bot.x, enemy.y - bot.y) < enemy.radius + bot.radius) {
+            damageBot(20);
+            if (bot) bot.damageCooldown = 0.7;
+          }
+
+          if (distance < player.radius + enemy.radius) {
+            if (damagePlayer(1)) return;
+          }
+
+          let defeated = false;
+          for (let bulletIndex = bullets.length - 1; bulletIndex >= 0; bulletIndex--) {
+            const bullet = bullets[bulletIndex];
+            if (Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y) < bullet.radius + enemy.radius) {
+              bullets.splice(bulletIndex, 1);
+              enemy.health -= bullet.damage;
+              if (enemy.health <= 0) {
+                enemies.splice(enemyIndex, 1);
+                score += 1;
+                scoreElement.textContent = String(score);
+                updateLevel();
+                defeated = true;
+                break;
+              }
+            }
+          }
+          if (defeated) continue;
+        }
+
+        if (boss) {
+          const dx = player.x - boss.x;
+          const dy = player.y - boss.y;
+          const distance = Math.hypot(dx, dy) || 1;
+          boss.x += (dx / distance) * boss.speed * deltaTime;
+          boss.y += (dy / distance) * boss.speed * deltaTime;
+          boss.fireCooldown -= deltaTime;
+
+          if (distance < player.radius + boss.radius) {
+            if (damagePlayer(1)) return;
+          }
+          if (bot && bot.damageCooldown <= 0 &&
+              Math.hypot(boss.x - bot.x, boss.y - bot.y) < boss.radius + bot.radius) {
+            damageBot(35);
+            if (bot) bot.damageCooldown = 0.7;
+          }
+          if (boss.fireCooldown <= 0) shootBoss();
+
+          for (let bulletIndex = bullets.length - 1; bulletIndex >= 0; bulletIndex--) {
+            const bullet = bullets[bulletIndex];
+            if (Math.hypot(bullet.x - boss.x, bullet.y - boss.y) < bullet.radius + boss.radius) {
+              bullets.splice(bulletIndex, 1);
+              boss.health -= bullet.damage;
+              if (boss.health <= 0) {
+                const defeatedFinalBoss = boss.isFinalBoss;
+                boss = null;
+                enemyBullets.length = 0;
+                score += killsPerLevel;
+                scoreElement.textContent = String(score);
+                updateLevel();
+                unlockNotice = defeatedFinalBoss
+                  ? "Chefe da onda 500 derrotado! A partida continua!"
+                  : `Chefe derrotado! +${killsPerLevel} pontos`;
+                unlockNoticeTime = 2.4;
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      function drawGrid() {
+        const spacing = 40;
+        context.strokeStyle = "rgba(151, 185, 190, 0.055)";
+        context.lineWidth = 1;
+        context.beginPath();
+        for (let x = spacing; x < width; x += spacing) {
+          context.moveTo(x, 0);
+          context.lineTo(x, height);
+        }
+        for (let y = spacing; y < height; y += spacing) {
+          context.moveTo(0, y);
+          context.lineTo(width, y);
+        }
+        context.stroke();
+      }
+
+      function draw() {
+        context.clearRect(0, 0, width, height);
+        context.fillStyle = "#172127";
+        context.fillRect(0, 0, width, height);
+        drawGrid();
+
+        // Desenha os projéteis.
+        for (const bullet of bullets) {
+          context.fillStyle = bullet.color;
+          context.beginPath();
+          context.arc(bullet.x, bullet.y, bullet.radius, 0, Math.PI * 2);
+          context.fill();
+        }
+
+        for (const bullet of enemyBullets) {
+          context.fillStyle = "#ff5577";
+          context.beginPath();
+          context.arc(bullet.x, bullet.y, bullet.radius, 0, Math.PI * 2);
+          context.fill();
+        }
+
+        if (boss) {
+          context.save();
+          context.translate(boss.x, boss.y);
+          context.rotate(performance.now() / 1200);
+          context.fillStyle = boss.isFinalBoss ? "#bd354d" : "#a64de0";
+          context.strokeStyle = boss.isFinalBoss ? "#ffe27a" : "#f3c7ff";
+          context.lineWidth = boss.isFinalBoss ? 6 : 4;
+          context.beginPath();
+          const bossPoints = boss.isFinalBoss ? 12 : 8;
+          for (let point = 0; point < bossPoints; point++) {
+            const angle = (point / bossPoints) * Math.PI * 2;
+            const x = Math.cos(angle) * boss.radius;
+            const y = Math.sin(angle) * boss.radius;
+            if (point === 0) context.moveTo(x, y);
+            else context.lineTo(x, y);
+          }
+          context.closePath();
+          context.fill();
+          context.stroke();
+          if (boss.isFinalBoss) {
+            context.fillStyle = "#ffe27a";
+            context.beginPath();
+            context.arc(0, 0, boss.radius * 0.28, 0, Math.PI * 2);
+            context.fill();
+          }
+          context.restore();
+
+          const healthBarWidth = boss.radius * 2.4;
+          const healthBarX = boss.x - healthBarWidth / 2;
+          const healthBarY = boss.y - boss.radius - 14;
+          context.textAlign = "center";
+          context.font = "700 11px system-ui, sans-serif";
+          context.fillStyle = boss.isFinalBoss ? "#ffe27a" : "#f3c7ff";
+          context.fillText(
+            boss.isFinalBoss ? "BOSS FINAL · ONDA 500" : `CHEFE · ONDA ${boss.wave}`,
+            boss.x,
+            healthBarY - 5
+          );
+          context.fillStyle = "rgba(0, 0, 0, 0.75)";
+          context.fillRect(healthBarX, healthBarY, healthBarWidth, 7);
+          context.fillStyle = boss.isFinalBoss ? "#ffe27a" : "#ff5577";
+          context.fillRect(
+            healthBarX,
+            healthBarY,
+            healthBarWidth * Math.max(0, boss.health / boss.maxHealth),
+            7
+          );
+        }
+
+        // Os inimigos variam de forma e apontam para o jogador.
+        const enemyColors = {
+          circle: "#ef6262",
+          triangle: "#ff9f68",
+          square: "#e76f9a",
+          pentagon: "#c792ea",
+          hexagon: "#f07167"
+        };
+        for (const enemy of enemies) {
+          const angle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+          context.save();
+          context.translate(enemy.x, enemy.y);
+          context.rotate(angle + enemy.rotation);
+          context.fillStyle = enemy.maxHealth >= 5 ? "#c94f66" : enemyColors[enemy.shape];
+          context.strokeStyle = "#ffaaaa";
+          context.lineWidth = 2;
+          context.beginPath();
+          if (enemy.shape === "circle") {
+            context.arc(0, 0, enemy.radius, 0, Math.PI * 2);
+          } else {
+            const sides = { triangle: 3, square: 4, pentagon: 5, hexagon: 6 }[enemy.shape];
+            for (let point = 0; point < sides; point++) {
+              const vertexAngle = (point / sides) * Math.PI * 2 - Math.PI / 2;
+              const x = Math.cos(vertexAngle) * enemy.radius;
+              const y = Math.sin(vertexAngle) * enemy.radius;
+              if (point === 0) context.moveTo(x, y);
+              else context.lineTo(x, y);
+            }
+            context.closePath();
+          }
+          context.fill();
+          context.stroke();
+          context.restore();
+
+          context.strokeStyle = "#ffdddd";
+          context.lineWidth = 2;
+          context.beginPath();
+          context.moveTo(enemy.x, enemy.y);
+          context.lineTo(enemy.x + Math.cos(angle) * enemy.radius * 0.72,
+                         enemy.y + Math.sin(angle) * enemy.radius * 0.72);
+          context.stroke();
+
+          const healthBarWidth = enemy.radius * 2;
+          const healthBarHeight = 4;
+          const healthBarX = enemy.x - healthBarWidth / 2;
+          const healthBarY = enemy.y - enemy.radius - 9;
+          context.fillStyle = "rgba(0, 0, 0, 0.65)";
+          context.fillRect(healthBarX, healthBarY, healthBarWidth, healthBarHeight);
+          context.fillStyle = enemy.health / enemy.maxHealth > 0.5 ? "#69d6a5" : "#ffd166";
+          context.fillRect(
+            healthBarX,
+            healthBarY,
+            healthBarWidth * Math.max(0, enemy.health / enemy.maxHealth),
+            healthBarHeight
+          );
+        }
+
+        if (bot) {
+          context.fillStyle = "#56c7e8";
+          context.strokeStyle = "#c5f7ff";
+          context.lineWidth = 2;
+          context.beginPath();
+          context.arc(bot.x, bot.y, bot.radius, 0, Math.PI * 2);
+          context.fill();
+          context.stroke();
+          context.fillStyle = "#172127";
+          context.fillRect(bot.x - 5, bot.y - 3, 3, 3);
+          context.fillRect(bot.x + 2, bot.y - 3, 3, 3);
+          context.strokeStyle = "#c5f7ff";
+          context.beginPath();
+          context.moveTo(bot.x, bot.y - bot.radius);
+          context.lineTo(bot.x, bot.y - bot.radius - 5);
+          context.stroke();
+
+          const healthBarWidth = bot.radius * 2;
+          const healthRatio = bot.health / bot.maxHealth;
+          context.fillStyle = "rgba(0, 0, 0, 0.7)";
+          context.fillRect(bot.x - healthBarWidth / 2, bot.y - bot.radius - 11, healthBarWidth, 4);
+          context.fillStyle = "#75f0d0";
+          context.fillRect(
+            bot.x - healthBarWidth / 2,
+            bot.y - bot.radius - 11,
+            healthBarWidth * healthRatio,
+            4
+          );
+        }
+
+        // O cano gira em direção ao cursor; o corpo do jogador fica centralizado.
+        context.save();
+        context.translate(player.x, player.y);
+        context.rotate(player.angle);
+        context.fillStyle = "#d6e5e8";
+        context.fillRect(2, -5, player.radius + 13, 10);
+        context.restore();
+
+        if (player.invulnerability === 0 || Math.floor(performance.now() / 100) % 2 === 0) {
+          context.fillStyle = "#55c8a0";
+          context.beginPath();
+          context.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+          context.fill();
+          context.strokeStyle = "#b8ffe1";
+          context.lineWidth = 2;
+          context.stroke();
+        }
+
+        if (unlockNoticeTime > 0) {
+          context.save();
+          context.globalAlpha = Math.min(1, unlockNoticeTime * 2);
+          context.textAlign = "center";
+          context.font = "700 20px system-ui, sans-serif";
+          context.fillStyle = "#8be8bd";
+          context.shadowColor = "#000";
+          context.shadowBlur = 8;
+          context.fillText(unlockNotice, width / 2, 88);
+          context.restore();
+        }
+      }
+
+      function gameLoop(timestamp) {
+        if (!running) return;
+        // Limitar o delta evita saltos grandes ao voltar para a aba do jogo.
+        const deltaTime = Math.min((timestamp - previousTime) / 1000, 0.04);
+        previousTime = timestamp;
+        update(deltaTime);
+        draw();
+        if (running) animationFrame = requestAnimationFrame(gameLoop);
+      }
+
+      window.addEventListener("resize", resizeCanvas);
+      window.addEventListener("keydown", (event) => {
+        const key = event.key.toLowerCase();
+        if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(key)) {
+          event.preventDefault();
+        }
+        keys.add(key);
+      });
+      window.addEventListener("keyup", (event) => keys.delete(event.key.toLowerCase()));
+      window.addEventListener("blur", () => {
+        keys.clear();
+        firing = false;
+      });
+      canvas.addEventListener("pointermove", updatePointer);
+      canvas.addEventListener("pointerdown", (event) => {
+        if (event.button === 0) {
+          updatePointer(event);
+          firing = true;
+        }
+      });
+      window.addEventListener("pointerup", (event) => {
+        if (event.button === 0) firing = false;
+      });
+      startButton.addEventListener("click", startGame);
+
+      resizeCanvas();
+    })();
+  </script>
+</body>
+</html>
