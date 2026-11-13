@@ -236,7 +236,7 @@
         <span id="player-health" class="player-health">Vida: 3 / 3</span>
         <span id="bot-status" class="bot-status">Bot: aguardando início</span>
       </div>
-      <div class="controls">Mover: WASD ou setas<br>Mirar: mouse · Atirar: clique esquerdo</div>
+      <div class="controls">Mover: WASD ou setas<br>Mirar: mouse · Atirar: clique esquerdo<br>Turbo: E quando disponível<br>Coração: encoste para recuperar vida</div>
     </div>
     <div id="power-status" class="power-status" hidden aria-live="polite">
       <div class="power-label">
@@ -282,6 +282,7 @@
       const bullets = [];
       const enemyBullets = [];
       const enemies = [];
+      const heartDrops = [];
       const player = {
         x: 0,
         y: 0,
@@ -295,8 +296,11 @@
       const enemyShapes = ["circle", "triangle", "square", "pentagon", "hexagon"];
       const killsPerLevel = 5;
       const powerDuration = 5;
+      const powerCooldown = 5;
       const powerDamageMultiplier = 1.5;
       const powerFireRateMultiplier = 0.7;
+      const heartDropChance = 0.18;
+      const heartDuration = 12;
       const baseWeapons = [
         { name: "Pistola", interval: 0.2, pellets: 1, spread: 0, speed: 570, radius: 4, damage: 2, color: "#ffd166" },
         { name: "Submetralhadora", interval: 0.09, pellets: 1, spread: 0, speed: 610, radius: 3, damage: 3, color: "#8be9fd" },
@@ -325,6 +329,8 @@
       let animationFrame = 0;
       let pointer = { x: 0, y: 0 };
       let overdriveTime = 0;
+      let turboCooldownTime = 0;
+      let turboReady = false;
       let muzzleFlashTime = 0;
       let audioContext = null;
 
@@ -354,12 +360,14 @@
       }
 
       function updateOverdriveUI() {
-        const remaining = Math.max(0, Math.min(1, overdriveTime / powerDuration));
-        powerStatusElement.hidden = remaining === 0;
+        const cooldownRemaining = Math.max(overdriveTime, turboCooldownTime);
+        const ready = turboReady && cooldownRemaining === 0;
+        const remaining = ready ? 1 : Math.max(0, Math.min(1, cooldownRemaining / powerCooldown));
+        powerStatusElement.hidden = !ready && remaining === 0;
         powerMeterFillElement.style.transform = `scaleX(${remaining})`;
-        powerMeterElement.setAttribute("aria-valuenow", String(Math.ceil(overdriveTime)));
-        const seconds = `${Math.ceil(overdriveTime)}s`;
-        if (powerTimerElement.textContent !== seconds) powerTimerElement.textContent = seconds;
+        powerMeterElement.setAttribute("aria-valuenow", String(ready ? powerCooldown : Math.ceil(cooldownRemaining)));
+        const status = ready ? "E · pronto" : `${Math.ceil(cooldownRemaining)}s`;
+        if (powerTimerElement.textContent !== status) powerTimerElement.textContent = status;
       }
 
       function enableAudio() {
@@ -397,6 +405,83 @@
         oscillator.stop(now + 0.09);
       }
 
+      function playShapeDefeatSound(shape) {
+        if (!audioContext) return;
+        const sounds = {
+          circle: { frequency: 260, waveform: "sine" },
+          triangle: { frequency: 420, waveform: "triangle" },
+          square: { frequency: 180, waveform: "square" },
+          pentagon: { frequency: 520, waveform: "sawtooth" },
+          hexagon: { frequency: 330, waveform: "triangle" }
+        };
+        const sound = sounds[shape];
+        if (!sound) return;
+
+        const now = audioContext.currentTime;
+        const oscillator = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        oscillator.type = sound.waveform;
+        oscillator.frequency.setValueAtTime(sound.frequency, now);
+        oscillator.frequency.exponentialRampToValueAtTime(sound.frequency * 0.55, now + 0.13);
+        gain.gain.setValueAtTime(0.08, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+        oscillator.connect(gain);
+        gain.connect(audioContext.destination);
+        oscillator.start(now);
+        oscillator.stop(now + 0.14);
+      }
+
+      function playTurboSound() {
+        if (!audioContext) return;
+        const now = audioContext.currentTime;
+        const oscillator = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        oscillator.type = "sawtooth";
+        oscillator.frequency.setValueAtTime(180, now);
+        oscillator.frequency.exponentialRampToValueAtTime(720, now + 0.32);
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.linearRampToValueAtTime(0.12, now + 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
+        oscillator.connect(gain);
+        gain.connect(audioContext.destination);
+        oscillator.start(now);
+        oscillator.stop(now + 0.42);
+      }
+
+      function playHeartPickupSound() {
+        if (!audioContext) return;
+        const now = audioContext.currentTime;
+        const oscillator = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        oscillator.type = "sine";
+        oscillator.frequency.setValueAtTime(520, now);
+        oscillator.frequency.exponentialRampToValueAtTime(880, now + 0.16);
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.linearRampToValueAtTime(0.1, now + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+        oscillator.connect(gain);
+        gain.connect(audioContext.destination);
+        oscillator.start(now);
+        oscillator.stop(now + 0.2);
+      }
+
+      function activateTurbo() {
+        if (!running || !turboReady || overdriveTime > 0) return;
+        turboReady = false;
+        overdriveTime = powerDuration;
+        turboCooldownTime = powerCooldown;
+        unlockNotice = "Turbo ativado!";
+        unlockNoticeTime = 2;
+        updateOverdriveUI();
+        playTurboSound();
+      }
+
+      function maybeDropHeart(x, y) {
+        if (Math.random() < heartDropChance) {
+          heartDrops.push({ x, y, radius: 12, life: heartDuration });
+        }
+      }
+
       function startGame() {
         cancelAnimationFrame(animationFrame);
         enableAudio();
@@ -404,6 +489,7 @@
         bullets.length = 0;
         enemyBullets.length = 0;
         enemies.length = 0;
+        heartDrops.length = 0;
         boss = null;
         keys.clear();
         scoreElement.textContent = "0";
@@ -414,6 +500,8 @@
         unlockNotice = "";
         unlockNoticeTime = 0;
         overdriveTime = 0;
+        turboCooldownTime = 0;
+        turboReady = false;
         muzzleFlashTime = 0;
         updateOverdriveUI();
         player.x = width / 2;
@@ -444,6 +532,8 @@
         running = false;
         firing = false;
         overdriveTime = 0;
+        turboCooldownTime = 0;
+        turboReady = false;
         updateOverdriveUI();
         overlayTitle.textContent = "Fim de jogo";
         overlayMessage.textContent = `Sua pontuação: ${score}. Tente novamente e sobreviva por mais tempo!`;
@@ -678,9 +768,9 @@
           });
         }
         weaponIndex = unlockedWeaponIndex;
-        overdriveTime = powerDuration;
+        turboReady = turboCooldownTime === 0;
         updateOverdriveUI();
-        unlockNotice = "Potência turbo!";
+        unlockNotice = turboReady ? "Turbo pronto · E" : "Turbo recarregando";
         weaponElement.textContent = weapons[weaponIndex].name;
         unlockNoticeTime = 3;
         if (level % 10 === 0) spawnBoss();
@@ -689,10 +779,29 @@
       function update(deltaTime) {
         unlockNoticeTime = Math.max(0, unlockNoticeTime - deltaTime);
         overdriveTime = Math.max(0, overdriveTime - deltaTime);
+        const wasTurboCoolingDown = turboCooldownTime > 0;
+        turboCooldownTime = Math.max(0, turboCooldownTime - deltaTime);
+        if (wasTurboCoolingDown && turboCooldownTime === 0) turboReady = true;
         muzzleFlashTime = Math.max(0, muzzleFlashTime - deltaTime);
         updateOverdriveUI();
         player.invulnerability = Math.max(0, player.invulnerability - deltaTime);
         player.angle = Math.atan2(pointer.y - player.y, pointer.x - player.x);
+
+        for (let index = heartDrops.length - 1; index >= 0; index--) {
+          const heart = heartDrops[index];
+          heart.life -= deltaTime;
+          if (heart.life <= 0) {
+            heartDrops.splice(index, 1);
+            continue;
+          }
+          if (player.health < player.maxHealth &&
+              Math.hypot(player.x - heart.x, player.y - heart.y) < player.radius + heart.radius) {
+            heartDrops.splice(index, 1);
+            player.health = Math.min(player.maxHealth, player.health + 1);
+            playerHealthElement.textContent = `Vida: ${player.health} / ${player.maxHealth}`;
+            playHeartPickupSound();
+          }
+        }
 
         let moveX = 0;
         let moveY = 0;
@@ -775,7 +884,9 @@
               bullets.splice(bulletIndex, 1);
               enemy.health -= bullet.damage;
               if (enemy.health <= 0) {
+                maybeDropHeart(enemy.x, enemy.y);
                 enemies.splice(enemyIndex, 1);
+                playShapeDefeatSound(enemy.shape);
                 score += 1;
                 scoreElement.textContent = String(score);
                 updateLevel();
@@ -811,6 +922,7 @@
               bullets.splice(bulletIndex, 1);
               boss.health -= bullet.damage;
               if (boss.health <= 0) {
+                maybeDropHeart(boss.x, boss.y);
                 const defeatedFinalBoss = boss.isFinalBoss;
                 boss = null;
                 enemyBullets.length = 0;
@@ -874,6 +986,28 @@
           context.beginPath();
           context.arc(bullet.x, bullet.y, bullet.radius, 0, Math.PI * 2);
           context.fill();
+        }
+
+        for (const heart of heartDrops) {
+          context.save();
+          context.translate(heart.x, heart.y);
+          context.shadowColor = "#ff5c8a";
+          context.shadowBlur = 14;
+          context.fillStyle = "#ff5c8a";
+          context.strokeStyle = "#ffd1df";
+          context.lineWidth = 2;
+          context.beginPath();
+          context.moveTo(0, heart.radius * 0.75);
+          context.bezierCurveTo(-heart.radius * 1.5, -heart.radius * 0.1,
+                                -heart.radius * 0.85, -heart.radius * 1.25,
+                                0, -heart.radius * 0.55);
+          context.bezierCurveTo(heart.radius * 0.85, -heart.radius * 1.25,
+                                heart.radius * 1.5, -heart.radius * 0.1,
+                                0, heart.radius * 0.75);
+          context.closePath();
+          context.fill();
+          context.stroke();
+          context.restore();
         }
 
         if (boss) {
@@ -1109,6 +1243,7 @@
         if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(key)) {
           event.preventDefault();
         }
+        if (key === "e" && !event.repeat) activateTurbo();
         keys.add(key);
       });
       window.addEventListener("keyup", (event) => keys.delete(event.key.toLowerCase()));
