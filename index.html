@@ -106,6 +106,49 @@
       font-weight: 800;
     }
 
+    .power-status {
+      position: absolute;
+      bottom: 42px;
+      left: 50%;
+      z-index: 1;
+      width: min(240px, calc(100% - 32px));
+      padding: 8px 12px;
+      transform: translateX(-50%);
+      border: 1px solid rgba(255, 209, 102, .7);
+      border-radius: 999px;
+      background: rgba(22, 31, 34, .94);
+      box-shadow: 0 0 18px rgba(255, 209, 102, .24);
+      color: #fff2b0;
+      font-size: .72rem;
+      font-weight: 800;
+    }
+
+    .power-status[hidden] { display: none; }
+
+    .power-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 5px;
+    }
+
+    .power-meter {
+      height: 5px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .16);
+    }
+
+    .power-meter-fill {
+      display: block;
+      width: 100%;
+      height: 100%;
+      transform: scaleX(0);
+      transform-origin: left;
+      background: linear-gradient(90deg, #ff9f43, #fff2a1);
+      box-shadow: 0 0 10px rgba(255, 209, 102, .8);
+    }
+
     .credit {
       position: absolute;
       right: 14px;
@@ -175,6 +218,7 @@
       .game-shell { width: 100vw; height: 100vh; min-height: 0; border: 0; border-radius: 0; }
       .hud { inset: 14px; }
       .controls { max-width: 190px; font-size: .72rem; }
+      .power-status { bottom: 36px; }
     }
   </style>
 </head>
@@ -193,6 +237,16 @@
         <span id="bot-status" class="bot-status">Bot: aguardando início</span>
       </div>
       <div class="controls">Mover: WASD ou setas<br>Mirar: mouse · Atirar: clique esquerdo</div>
+    </div>
+    <div id="power-status" class="power-status" hidden aria-live="polite">
+      <div class="power-label">
+        <span>Potência turbo</span>
+        <span id="power-timer">5s</span>
+      </div>
+      <div class="power-meter" role="progressbar" aria-label="Tempo restante de potência turbo"
+           aria-valuemin="0" aria-valuemax="5" aria-valuenow="0">
+        <span id="power-meter-fill" class="power-meter-fill"></span>
+      </div>
     </div>
     <section id="overlay" class="overlay">
       <div class="dialog">
@@ -215,6 +269,10 @@
       const weaponElement = document.getElementById("weapon");
       const playerHealthElement = document.getElementById("player-health");
       const botStatusElement = document.getElementById("bot-status");
+      const powerStatusElement = document.getElementById("power-status");
+      const powerTimerElement = document.getElementById("power-timer");
+      const powerMeterElement = powerStatusElement.querySelector(".power-meter");
+      const powerMeterFillElement = document.getElementById("power-meter-fill");
       const overlay = document.getElementById("overlay");
       const overlayTitle = document.getElementById("overlay-title");
       const overlayMessage = document.getElementById("overlay-message");
@@ -236,6 +294,9 @@
       };
       const enemyShapes = ["circle", "triangle", "square", "pentagon", "hexagon"];
       const killsPerLevel = 5;
+      const powerDuration = 5;
+      const powerDamageMultiplier = 1.5;
+      const powerFireRateMultiplier = 0.7;
       const baseWeapons = [
         { name: "Pistola", interval: 0.2, pellets: 1, spread: 0, speed: 570, radius: 4, damage: 2, color: "#ffd166" },
         { name: "Submetralhadora", interval: 0.09, pellets: 1, spread: 0, speed: 610, radius: 3, damage: 3, color: "#8be9fd" },
@@ -263,6 +324,9 @@
       let previousTime = 0;
       let animationFrame = 0;
       let pointer = { x: 0, y: 0 };
+      let overdriveTime = 0;
+      let muzzleFlashTime = 0;
+      let audioContext = null;
 
       // Ajusta a resolução interna para a densidade da tela sem alterar o tamanho visual.
       function resizeCanvas() {
@@ -289,8 +353,53 @@
         pointer = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
       }
 
+      function updateOverdriveUI() {
+        const remaining = Math.max(0, Math.min(1, overdriveTime / powerDuration));
+        powerStatusElement.hidden = remaining === 0;
+        powerMeterFillElement.style.transform = `scaleX(${remaining})`;
+        powerMeterElement.setAttribute("aria-valuenow", String(Math.ceil(overdriveTime)));
+        const seconds = `${Math.ceil(overdriveTime)}s`;
+        if (powerTimerElement.textContent !== seconds) powerTimerElement.textContent = seconds;
+      }
+
+      function enableAudio() {
+        const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextConstructor) {
+          console.warn("Este navegador não oferece suporte ao áudio dos tiros.");
+          return;
+        }
+        if (!audioContext) audioContext = new AudioContextConstructor();
+        if (audioContext.state === "suspended") {
+          audioContext.resume().catch((error) => {
+            console.warn("Não foi possível ativar o áudio dos tiros.", error);
+          });
+        }
+      }
+
+      function playShotSound(powered) {
+        if (!audioContext) return;
+        const soundIndex = weaponIndex % baseWeapons.length;
+        const frequencies = [190, 280, 150, 440, 640, 320, 120];
+        const waveforms = ["square", "sawtooth", "triangle", "square", "sawtooth", "triangle", "sawtooth"];
+        const frequency = frequencies[soundIndex] * (powered ? 1.18 : 1);
+        const now = audioContext.currentTime;
+        const oscillator = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+
+        oscillator.type = waveforms[soundIndex];
+        oscillator.frequency.setValueAtTime(frequency, now);
+        oscillator.frequency.exponentialRampToValueAtTime(Math.max(60, frequency * 0.42), now + 0.08);
+        gain.gain.setValueAtTime(powered ? 0.11 : 0.075, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+        oscillator.connect(gain);
+        gain.connect(audioContext.destination);
+        oscillator.start(now);
+        oscillator.stop(now + 0.09);
+      }
+
       function startGame() {
         cancelAnimationFrame(animationFrame);
+        enableAudio();
         score = 0;
         bullets.length = 0;
         enemyBullets.length = 0;
@@ -304,6 +413,9 @@
         weaponElement.textContent = weapons[0].name;
         unlockNotice = "";
         unlockNoticeTime = 0;
+        overdriveTime = 0;
+        muzzleFlashTime = 0;
+        updateOverdriveUI();
         player.x = width / 2;
         player.y = height / 2;
         player.angle = 0;
@@ -331,6 +443,8 @@
       function endGame() {
         running = false;
         firing = false;
+        overdriveTime = 0;
+        updateOverdriveUI();
         overlayTitle.textContent = "Fim de jogo";
         overlayMessage.textContent = `Sua pontuação: ${score}. Tente novamente e sobreviva por mais tempo!`;
         startButton.textContent = "Jogar novamente";
@@ -454,6 +568,7 @@
       function shoot() {
         const weapon = weapons[weaponIndex];
         const muzzleDistance = player.radius + 9;
+        const powered = overdriveTime > 0;
 
         for (let pellet = 0; pellet < weapon.pellets; pellet++) {
           const spreadOffset = weapon.pellets === 1
@@ -463,16 +578,19 @@
           bullets.push({
             x: player.x + Math.cos(angle) * muzzleDistance,
             y: player.y + Math.sin(angle) * muzzleDistance,
-            vx: Math.cos(angle) * weapon.speed,
-            vy: Math.sin(angle) * weapon.speed,
-            radius: weapon.radius,
-            damage: weapon.damage,
-            color: weapon.color,
+            vx: Math.cos(angle) * weapon.speed * (powered ? 1.12 : 1),
+            vy: Math.sin(angle) * weapon.speed * (powered ? 1.12 : 1),
+            radius: weapon.radius * (powered ? 1.25 : 1),
+            damage: powered ? Math.ceil(weapon.damage * powerDamageMultiplier) : weapon.damage,
+            color: powered ? "#fff2a1" : weapon.color,
+            powered,
             life: 1.15
           });
         }
 
-        fireCooldown = weapon.interval;
+        muzzleFlashTime = 0.09;
+        playShotSound(powered);
+        fireCooldown = weapon.interval * (powered ? powerFireRateMultiplier : 1);
       }
 
       function turnBotIntoEnemy() {
@@ -560,14 +678,19 @@
           });
         }
         weaponIndex = unlockedWeaponIndex;
-        unlockNotice = `Onda ${level}: ${weapons[weaponIndex].name} desbloqueada!`;
+        overdriveTime = powerDuration;
+        updateOverdriveUI();
+        unlockNotice = "Potência turbo!";
         weaponElement.textContent = weapons[weaponIndex].name;
-        unlockNoticeTime = 2.4;
+        unlockNoticeTime = 3;
         if (level % 10 === 0) spawnBoss();
       }
 
       function update(deltaTime) {
         unlockNoticeTime = Math.max(0, unlockNoticeTime - deltaTime);
+        overdriveTime = Math.max(0, overdriveTime - deltaTime);
+        muzzleFlashTime = Math.max(0, muzzleFlashTime - deltaTime);
+        updateOverdriveUI();
         player.invulnerability = Math.max(0, player.invulnerability - deltaTime);
         player.angle = Math.atan2(pointer.y - player.y, pointer.x - player.x);
 
@@ -729,10 +852,21 @@
 
         // Desenha os projéteis.
         for (const bullet of bullets) {
+          context.save();
+          context.strokeStyle = bullet.color;
+          context.lineWidth = Math.max(2, bullet.radius * 1.35);
+          context.lineCap = "round";
+          context.shadowColor = bullet.color;
+          context.shadowBlur = bullet.powered ? 18 : 8;
+          context.beginPath();
+          context.moveTo(bullet.x - bullet.vx * 0.025, bullet.y - bullet.vy * 0.025);
+          context.lineTo(bullet.x, bullet.y);
+          context.stroke();
           context.fillStyle = bullet.color;
           context.beginPath();
           context.arc(bullet.x, bullet.y, bullet.radius, 0, Math.PI * 2);
           context.fill();
+          context.restore();
         }
 
         for (const bullet of enemyBullets) {
@@ -878,13 +1012,63 @@
           );
         }
 
-        // O cano gira em direção ao cursor; o corpo do jogador fica centralizado.
+        // O cano gira em direção ao cursor; a cor e o brilho acompanham a arma atual.
+        const weapon = weapons[weaponIndex];
+        const powered = overdriveTime > 0;
         context.save();
         context.translate(player.x, player.y);
         context.rotate(player.angle);
-        context.fillStyle = "#d6e5e8";
-        context.fillRect(2, -5, player.radius + 13, 10);
+        context.shadowColor = powered ? "#ffd166" : weapon.color;
+        context.shadowBlur = powered ? 22 : 8;
+        context.fillStyle = powered ? "#fff2b0" : "#52646b";
+        context.strokeStyle = powered ? "#fff6d2" : weapon.color;
+        context.lineWidth = 2;
+        context.beginPath();
+        context.moveTo(2, -7);
+        context.lineTo(13, -8);
+        context.lineTo(15, -5);
+        context.lineTo(player.radius + 16, -5);
+        context.lineTo(player.radius + 19, -2);
+        context.lineTo(player.radius + 19, 2);
+        context.lineTo(player.radius + 16, 5);
+        context.lineTo(15, 5);
+        context.lineTo(13, 8);
+        context.lineTo(4, 7);
+        context.closePath();
+        context.fill();
+        context.stroke();
+        context.shadowBlur = 0;
+        context.fillStyle = powered ? "#ffbd59" : weapon.color;
+        context.fillRect(15, -2, player.radius + 1, 4);
+        context.fillStyle = "#26383d";
+        context.fillRect(7, 6, 7, 9);
+        context.fillStyle = powered ? "#fff9d7" : weapon.color;
+        context.beginPath();
+        context.arc(10, 0, powered ? 3.5 : 2.5, 0, Math.PI * 2);
+        context.fill();
+        if (muzzleFlashTime > 0) {
+          context.globalAlpha = Math.min(1, muzzleFlashTime / 0.09);
+          context.fillStyle = powered ? "#fff8cf" : weapon.color;
+          context.beginPath();
+          context.moveTo(player.radius + 18, -5);
+          context.lineTo(player.radius + 29, 0);
+          context.lineTo(player.radius + 18, 5);
+          context.closePath();
+          context.fill();
+        }
         context.restore();
+
+        if (powered) {
+          context.save();
+          context.strokeStyle = "rgba(255, 209, 102, 0.8)";
+          context.shadowColor = "#ffd166";
+          context.shadowBlur = 18;
+          context.lineWidth = 3;
+          context.beginPath();
+          context.arc(player.x, player.y, player.radius + 5, 0, Math.PI * 2);
+          context.stroke();
+          context.restore();
+        }
 
         if (player.invulnerability === 0 || Math.floor(performance.now() / 100) % 2 === 0) {
           context.fillStyle = "#55c8a0";
@@ -901,7 +1085,7 @@
           context.globalAlpha = Math.min(1, unlockNoticeTime * 2);
           context.textAlign = "center";
           context.font = "700 20px system-ui, sans-serif";
-          context.fillStyle = "#8be8bd";
+          context.fillStyle = overdriveTime > 0 ? "#fff2b0" : "#8be8bd";
           context.shadowColor = "#000";
           context.shadowBlur = 8;
           context.fillText(unlockNotice, width / 2, 88);
